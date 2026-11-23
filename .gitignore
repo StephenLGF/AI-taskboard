@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
+
+# 本地数据与密钥（默认在 ~/.tb/，这里兜底防止误拷进来）
+*.env
+secrets.env
+config.yaml
