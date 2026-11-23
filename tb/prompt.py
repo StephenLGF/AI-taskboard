@@ -69,7 +69,8 @@ def _print_menu(title: str, labels: list[str], index: int, hint: str) -> int:
     text = "\n".join(lines)
     sys.stdout.write(text)
     sys.stdout.flush()
-    return text.count("\n") + 1
+    # 光标停在最后一行，回到首行需要上移的行数 = 换行符个数
+    return text.count("\n")
 
 
 def _rewind(line_count: int) -> None:
@@ -155,15 +156,56 @@ def ask(title: str, default: str = "", allow_empty: bool = True) -> str:
         print("这项不能为空")
 
 
+def _read_masked(prompt_text: str) -> str:
+    """Read a secret, echoing * per char so paste is visible."""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    sys.stdout.write(prompt_text)
+    sys.stdout.flush()
+    chars: list[str] = []
+    try:
+        tty.setcbreak(fd)
+        cbreak = termios.tcgetattr(fd)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in {"\r", "\n"}:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in {"\x7f", "\b"}:
+                if chars:
+                    chars.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            if ch == "\x1b":
+                # 丢弃方向键等转义序列的剩余字节
+                tmp = termios.tcgetattr(fd)
+                try:
+                    tmp[6][termios.VMIN] = 0
+                    tmp[6][termios.VTIME] = 1
+                    termios.tcsetattr(fd, termios.TCSANOW, tmp)
+                    sys.stdin.read(2)
+                finally:
+                    termios.tcsetattr(fd, termios.TCSANOW, cbreak)
+                continue
+            chars.append(ch)
+            sys.stdout.write("*")
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return "".join(chars).strip()
+
+
 def ask_secret(title: str, has_existing: bool = False) -> str | None:
     """Return a new secret, or None to keep the existing one."""
-    import getpass
-
-    hint = "（输入不会回显" + ("，直接回车保留已有密钥）" if has_existing else "）")
+    hint = "（输入显示为 *" + ("，直接回车保留已有密钥）" if has_existing else "）")
     if not sys.stdin.isatty():
         raise RuntimeError("需要在交互式终端里运行")
     while True:
-        value = getpass.getpass(f"{title}{hint}: ")
+        value = _read_masked(f"{title}{hint}: ")
         if value:
             return value
         if has_existing:
