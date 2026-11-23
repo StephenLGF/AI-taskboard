@@ -162,3 +162,21 @@ def resolve_api_key(worker_cfg: dict[str, Any], data_dir: Path | None = None) ->
     from tb.secrets import load_secrets
 
     return load_secrets(data_dir or DATA_DIR).get(env_name, "")
+
+
+def queue_configured(queue: str, data_dir: Path | None = None) -> bool:
+    """A queue is usable only when its API key is set (env or secrets.env)."""
+    cfg = load_config()
+    wcfg = (cfg.get("workers") or {}).get(queue) or {}
+    return bool(resolve_api_key(wcfg, data_dir))
+
+
+def configured_queues(data_dir: Path | None = None) -> list[str]:
+    """Queues with an API key configured, in QUEUES order."""
+    cfg = load_config()
+    workers = cfg.get("workers") or {}
+    return [
+        queue
+        for queue in QUEUES
+        if resolve_api_key(workers.get(queue) or {}, data_dir)
+    ]

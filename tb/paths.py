@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 APP_NAME = "tb"
-DATA_DIR = Path(os.environ.get("TB_DATA_DIR", Path.home() / ".tb"))
+DATA_DIR = Path(os.environ.get("TB_DATA_DIR") or (Path.home() / ".tb"))
 CONFIG_PATH = DATA_DIR / "config.yaml"
 QUEUES = ("high", "mid", "low")
 STATUSES = ("pending", "running", "done", "failed", "canceled")

@@ -12,3 +12,10 @@ venv/
 *.env
 secrets.env
 config.yaml
+
+# tb 运行数据（防止把数据目录指到仓库里时误提交）
+.lock
+queues/
+workers/
+logs/
+factories/

@@ -148,7 +148,7 @@ class StopRequested(Exception):
 
 
 def run_worker_loop(queue: str, data_dir: Path | None = None) -> int:
-    data_dir = data_dir or Path(os.environ.get("TB_DATA_DIR", DATA_DIR))
+    data_dir = data_dir or Path(os.environ.get("TB_DATA_DIR") or DATA_DIR)
     ensure_layout(data_dir)
     stop = {"flag": False}
 
