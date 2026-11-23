@@ -11,4 +11,15 @@ while [ -L "$SOURCE" ]; do
 done
 ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
-exec "${PYTHON:-python3}" -m tb "$@"
+PY="${PYTHON:-}"
+if [[ -z "$PY" ]]; then
+  for cand in \
+    "$HOME/.local/share/uv/python/cpython-3.12-macos-aarch64-none/bin/python3.12" \
+    python3.13 python3.12 python3.11 python3; do
+    if [[ -x "$cand" ]] || command -v "$cand" >/dev/null 2>&1; then
+      PY="$cand"
+      break
+    fi
+  done
+fi
+exec "$PY" -m tb "$@"

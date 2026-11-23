@@ -6,9 +6,8 @@ import sys
 import termios
 import tty
 from collections.abc import Sequence
-from typing import TypeAlias
 
-Option: TypeAlias = tuple[str, str]
+Option = tuple[str, str]
 
 
 def _normalize(options: Sequence[str | tuple[str, str]]) -> list[Option]:
