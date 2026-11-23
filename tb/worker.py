@@ -291,6 +291,53 @@ def _call_openai_compatible(prompt: str, wcfg: dict[str, Any], model: str) -> st
     return str(content)
 
 
+def test_queue(queue: str, data_dir: Path = DATA_DIR, timeout: float = 15.0) -> dict[str, Any]:
+    """Check API connectivity/auth for a queue via GET {base_url}/models."""
+    cfg = load_config()
+    wcfg = worker_config(cfg, queue)
+    provider = str(wcfg.get("provider") or "stub")
+    if provider in {"stub", "dry-run", "dryrun", ""}:
+        return {"ok": False, "detail": "provider 还是 stub，未接入真实模型"}
+    api_key = resolve_api_key(wcfg, data_dir)
+    if not api_key:
+        return {"ok": False, "detail": f"API key 未设置（{wcfg.get('api_key_env')}）"}
+    base_url = str(wcfg.get("base_url") or "").rstrip("/")
+    if not base_url:
+        return {"ok": False, "detail": "base_url 未设置"}
+    model = str(wcfg.get("model") or "")
+    start = time.time()
+    try:
+        req = urllib.request.Request(
+            base_url + "/models",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "User-Agent": "tb",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        hint = "key 无效或权限不足" if exc.code in (401, 403) else "接口报错"
+        return {"ok": False, "detail": f"HTTP {exc.code}（{hint}）"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "detail": f"连接失败：{exc}"}
+    latency_ms = int((time.time() - start) * 1000)
+    items = payload.get("data") if isinstance(payload, dict) else payload
+    names = [
+        str(item.get("id") or item.get("name"))
+        for item in items or []
+        if isinstance(item, dict) and (item.get("id") or item.get("name"))
+    ]
+    return {
+        "ok": True,
+        "latency_ms": latency_ms,
+        "model": model,
+        "model_found": (model in names) if model else None,
+        "models_count": len(names),
+    }
+
+
 def maybe_autostart(queue: str, data_dir: Path = DATA_DIR) -> dict[str, Any] | None:
     cfg = load_config()
     if not cfg.get("auto_start_workers", True):

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tb import __version__
+from tb.chat import run_chat
 from tb.config import (
     configured_queues,
     load_config,
@@ -29,13 +30,15 @@ from tb.worker import (
     run_worker_loop,
     start_worker,
     stop_worker,
+    test_queue,
     worker_status,
 )
 
 USAGE = """tb — high/mid/low task queues and workers
 
 Usage:
-  tb enqueue high|mid|low --title TITLE --prompt PROMPT
+  tb enqueue [high|mid|low] --title TITLE --prompt PROMPT
+                                    (只配了一个队列时队列名可省略)
   tb status
   tb watch                          (已配置队列的分栏实时视图)
   tb list [worker|queue|factory]     (live, Ctrl-C to exit; --once for one shot)
@@ -43,7 +46,10 @@ Usage:
   tb factory run ID
   tb logs [task-id]
   tb cancel TASK_ID
-  tb setup                            (问答式配置 worker 的 URL / API key / 模型)
+  tb test [high|mid|low]             (测试 API 连通性，不带参数测全部已配置队列)
+  tb chat [high|mid|low] [-p PROMPT] (用队列模型对话，可直接操作 tb)
+  tb skill [show|path|install]       (tb 的 Agent Skill，可被任意 agent 使用)
+  tb setup [high|mid|low]            (问答式配置，带队列名可跳过选择)
   tb worker start|stop|restart high|mid|low
   tb worker run high|mid|low          (internal)
   tb config show
@@ -107,6 +113,24 @@ def _require_configured(queue: str, data_dir: Path) -> str | None:
     return f"队列 {queue} 未配置 API key（{hint}）。运行 tb setup 配置。"
 
 
+def _resolve_queue(queue: str | None, data_dir: Path) -> str | None:
+    """Explicit queue validated, or the single configured queue; None on failure."""
+    if queue:
+        err = _require_configured(queue, data_dir)
+        if err:
+            print(f"tb: {err}", file=sys.stderr)
+            return None
+        return queue
+    available = configured_queues(data_dir)
+    if len(available) == 1:
+        return available[0]
+    if not available:
+        print("tb: 尚无已配置队列，先运行 tb setup。", file=sys.stderr)
+    else:
+        print(f"tb: 请指定队列（可用: {', '.join(available)}）", file=sys.stderr)
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help", "help"}:
@@ -128,6 +152,9 @@ def main(argv: list[str] | None = None) -> int:
         "worker": cmd_worker,
         "config": cmd_config,
         "setup": cmd_setup,
+        "test": cmd_test,
+        "chat": cmd_chat,
+        "skill": cmd_skill,
     }
     handler = handlers.get(cmd)
     if handler is None:
@@ -143,7 +170,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_enqueue(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="tb enqueue", add_help=True)
-    parser.add_argument("queue", choices=QUEUES)
+    parser.add_argument("queue", nargs="?", choices=QUEUES)
     parser.add_argument("--title", required=True)
     parser.add_argument("--prompt", default="")
     parser.add_argument("--file", dest="prompt_file", help="read prompt from a file")
@@ -152,7 +179,22 @@ def _parse_enqueue(argv: list[str]) -> argparse.Namespace:
 
 def cmd_enqueue(argv: list[str]) -> int:
     args = _parse_enqueue(argv)
-    err = _require_configured(args.queue, _data_dir())
+    queue = args.queue
+    if queue is None:
+        available = configured_queues(_data_dir())
+        if len(available) == 1:
+            queue = available[0]
+        elif not available:
+            print("tb: 尚无已配置队列，先运行 tb setup。", file=sys.stderr)
+            return 1
+        else:
+            print(
+                f"tb: 请指定队列（可用: {', '.join(available)}），"
+                "如 tb enqueue high --title ...",
+                file=sys.stderr,
+            )
+            return 2
+    err = _require_configured(queue, _data_dir())
     if err:
         print(f"tb: {err}", file=sys.stderr)
         return 1
@@ -161,13 +203,13 @@ def cmd_enqueue(argv: list[str]) -> int:
         prompt = Path(args.prompt_file).read_text(encoding="utf-8")
     elif not prompt and not sys.stdin.isatty():
         prompt = sys.stdin.read()
-    task = enqueue_task(args.queue, args.title, prompt, _data_dir())
-    started = maybe_autostart(args.queue, _data_dir())
+    task = enqueue_task(queue, args.title, prompt, _data_dir())
+    started = maybe_autostart(queue, _data_dir())
     print(f"enqueued {task['id']} on {task['queue']}: {task['title']}")
     if started and started.get("running"):
-        print(f"started {args.queue} worker pid={started.get('pid')}")
+        print(f"started {queue} worker pid={started.get('pid')}")
     elif started and started.get("starting"):
-        print(f"starting {args.queue} worker pid={started.get('pid')}")
+        print(f"starting {queue} worker pid={started.get('pid')}")
     return 0
 
 
@@ -286,8 +328,92 @@ def cmd_cancel(argv: list[str]) -> int:
     return 0
 
 
-def cmd_setup(_argv: list[str]) -> int:
+def cmd_skill(argv: list[str]) -> int:
+    from tb.skill import install_skill, read_skill, skill_path
+
+    action = argv[0] if argv else "show"
+    if action == "show":
+        print(read_skill(), end="")
+        return 0
+    if action == "path":
+        print(skill_path())
+        return 0
+    if action == "install":
+        dest = install_skill()
+        print(f"已安装到 {dest}")
+        print("Claude Code 会自动发现该 skill；其他 agent 可把此文件加入其技能目录。")
+        return 0
+    print("usage: tb skill [show|path|install]", file=sys.stderr)
+    return 2
+
+
+def cmd_setup(argv: list[str]) -> int:
+    if argv:
+        if argv[0] not in QUEUES:
+            print("usage: tb setup [high|mid|low]", file=sys.stderr)
+            return 2
+        return run_setup(_data_dir(), queue=argv[0])
     return run_setup(_data_dir())
+
+
+def cmd_test(argv: list[str]) -> int:
+    data_dir = _data_dir()
+    if argv:
+        if argv[0] not in QUEUES:
+            print("usage: tb test [high|mid|low]", file=sys.stderr)
+            return 2
+        queues = [argv[0]]
+    else:
+        queues = configured_queues(data_dir)
+        if not queues:
+            print("没有已配置 API key 的队列。运行 tb setup 配置后使用。")
+            return 0
+    all_ok = True
+    for queue in queues:
+        result = test_queue(queue, data_dir)
+        if result.get("ok"):
+            parts = [f"{result['latency_ms']}ms"]
+            if result.get("model"):
+                found = result.get("model_found")
+                if found is True:
+                    parts.append(f"模型 {result['model']} 可用")
+                elif found is False:
+                    parts.append(f"模型 {result['model']} 不在列表中！")
+                    all_ok = False
+            print(f"  {queue}: OK（{'，'.join(parts)}）")
+        else:
+            all_ok = False
+            print(f"  {queue}: 失败 — {result.get('detail')}")
+    return 0 if all_ok else 1
+
+
+def cmd_chat(argv: list[str]) -> int:
+    queue: str | None = None
+    prompt: str | None = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in QUEUES and queue is None:
+            queue = arg
+        elif arg in {"-p", "--prompt"}:
+            i += 1
+            if i >= len(argv):
+                print("tb: -p/--prompt 需要内容", file=sys.stderr)
+                return 2
+            prompt = argv[i]
+        else:
+            print("usage: tb chat [high|mid|low] [-p PROMPT]", file=sys.stderr)
+            return 2
+        i += 1
+    data_dir = _data_dir()
+    resolved = _resolve_queue(queue, data_dir)
+    if resolved is None:
+        return 1
+    if prompt is None and not sys.stdin.isatty():
+        piped = sys.stdin.read().strip()
+        if piped:
+            prompt = piped
+    return run_chat(resolved, data_dir, one_shot=prompt)
 
 
 def cmd_worker(argv: list[str]) -> int:
@@ -296,7 +422,8 @@ def cmd_worker(argv: list[str]) -> int:
         return 2
     action, rest = argv[0], argv[1:]
     if action in {"setup", "init", "config"}:
-        return run_setup(_data_dir())
+        queue = rest[0] if rest and rest[0] in QUEUES else None
+        return run_setup(_data_dir(), queue=queue)
     if action == "run":
         if not rest or rest[0] not in QUEUES:
             print("usage: tb worker run high|mid|low", file=sys.stderr)
