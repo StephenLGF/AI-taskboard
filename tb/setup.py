@@ -92,7 +92,6 @@ def _queue_summary(queue: str, cfg: dict[str, Any], data_dir: Path) -> str:
 
 def _pick_queues(cfg: dict[str, Any], data_dir: Path) -> list[str]:
     options: list[tuple[str, str]] = [(q, _queue_summary(q, cfg, data_dir)) for q in QUEUES]
-    options.append(("all", "三个队列都配置"))
     options.append(("quit", "退出"))
     default = 0
     for i, queue in enumerate(QUEUES):
@@ -103,8 +102,6 @@ def _pick_queues(cfg: dict[str, Any], data_dir: Path) -> list[str]:
     chosen = choose("先选择要配置的 Worker 队列：", options, default=default)
     if chosen == "quit":
         return []
-    if chosen == "all":
-        return list(QUEUES)
     return [chosen]
 
 

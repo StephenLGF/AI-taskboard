@@ -97,7 +97,8 @@ def choose(
     sys.stdout.write("\033[?25l")
     sys.stdout.flush()
     try:
-        tty.setraw(fd)
+        # cbreak（而非 raw）保留输出处理，\n 才会自动带回车，菜单不会阶梯错位
+        tty.setcbreak(fd)
         while True:
             if drawn:
                 _rewind(drawn)
